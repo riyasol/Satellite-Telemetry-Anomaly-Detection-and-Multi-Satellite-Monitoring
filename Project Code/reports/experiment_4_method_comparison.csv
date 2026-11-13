@@ -1,0 +1,4 @@
+Method,Accuracy,Precision,Recall,F1-Score,TP,FP,TN,FN,Total Anomalies Flagged
+Rule-Based Detector,0.9800,0.8125,0.6842,0.7429,13,3,428,6,16
+Isolation Forest (ML),1.0000,1.0000,1.0000,1.0000,19,0,431,0,19
+Combined (OR-Logic),0.9933,0.8636,1.0000,0.9268,19,3,428,0,22

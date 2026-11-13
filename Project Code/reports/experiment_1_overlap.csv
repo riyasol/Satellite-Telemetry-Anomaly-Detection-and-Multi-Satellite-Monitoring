@@ -1,0 +1,5 @@
+Category,Count,Percentage
+Flagged by Both (Agreement),13,2.89%
+Rule-Based Only (Hard Outlier),3,0.67%
+Isolation Forest Only (Multivariate Outlier),6,1.33%
+Agreed Normal,428,95.11%
