@@ -4,7 +4,7 @@ Unit and System Verification Test Suite for:
 Satellite Telemetry Anomaly Detection and Multi-Satellite Monitoring
 Tests:
   1. Synthetic multi-satellite telemetry generation with ground truth
-  2. Telemetry data loading, cleaning, validation, and feature preparation
+  2. ESA Mission 1 telemetry loading, time alignment, and label matching
   3. Rule-based detector with nominal and anomalous parameter inputs
   4. Isolation Forest model training, inference, anomaly scoring, and model persistence
   5. Combined OR-logic anomaly detection logic
@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Add project root and src to sys.path
+# Add project root and src to sys.path so modules resolve in any environment
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 
@@ -29,7 +29,7 @@ for path in [PROJECT_ROOT, SRC_DIR]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from src.data_loader import load_telemetry_data, clean_and_validate_telemetry, prepare_features
+from src.data_loader import load_dataset, load_esa_telemetry, load_synthetic_telemetry
 from src.anomaly_detector import RuleBasedDetector, rule_based_detection
 from src.ml_anomaly_detector import SatelliteIsolationForest, train_test_split_telemetry
 from src.evaluation import compute_metrics, evaluate_all_detectors
@@ -49,15 +49,12 @@ from src.visualizer import (
 )
 
 
-
-
-
 class TestSatelliteTelemetrySystem(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Load telemetry dataset for use across test methods."""
-        cls.df = load_telemetry_data()
+        """Set up test datasets for use across test methods."""
+        cls.synth_df = load_dataset("synthetic")
         cls.features = ["temperature", "voltage", "current", "orientation"]
 
     def tearDown(self):
@@ -66,7 +63,7 @@ class TestSatelliteTelemetrySystem(unittest.TestCase):
 
     def test_01_synthetic_telemetry_generation(self):
         """Verify multi-satellite telemetry schema, records, and ground truth."""
-        df = self.df
+        df = self.synth_df
         expected_cols = [
             "timestamp", "satellite_id", "temperature", "voltage",
             "current", "orientation", "ground_truth", "anomaly_type"
@@ -80,28 +77,15 @@ class TestSatelliteTelemetrySystem(unittest.TestCase):
         self.assertIn(1, df["ground_truth"].values)
         self.assertIn(0, df["ground_truth"].values)
 
-    def test_02_data_cleaning_and_feature_preparation(self):
-        """Verify data cleaning, missing value handling, and feature preparation."""
-        # Create mock uncleaned telemetry with missing values
-        dirty_df = pd.DataFrame({
-            "timestamp": ["2026-03-01 00:00:00", "2026-03-01 00:01:00", "2026-03-01 00:02:00"],
-            "satellite_id": ["SAT-01", "SAT-01", "SAT-01"],
-            "temperature": [70.5, np.nan, 72.0],
-            "voltage": [3.85, 3.84, np.nan],
-            "current": [1.85, 1.86, 1.87],
-            "orientation": [10.0, 11.0, 12.0],
-            "ground_truth": [0, 1, 0]
-        })
-
-        clean_df = clean_and_validate_telemetry(dirty_df)
-        self.assertEqual(clean_df["temperature"].isna().sum(), 0, "Missing temperature was not imputed")
-        self.assertEqual(clean_df["voltage"].isna().sum(), 0, "Missing voltage was not imputed")
-        self.assertTrue(pd.api.types.is_datetime64_any_dtype(clean_df["timestamp"]))
-
-        # Test feature extraction
-        X, feature_names = prepare_features(clean_df)
-        self.assertEqual(len(feature_names), 4)
-        self.assertEqual(X.shape, (3, 4))
+    def test_02_esa_telemetry_loading(self):
+        """Verify actual ESA Mission 1 channel loading and label matching."""
+        esa_df = load_dataset("esa", max_records=500)
+        self.assertGreater(len(esa_df), 0, "ESA data failed to load")
+        self.assertIn("timestamp", esa_df.columns)
+        self.assertIn("channel_12", esa_df.columns)
+        self.assertEqual(esa_df["satellite_id"].iloc[0], "ESA-Mission1")
+        # Ensure no missing values after interpolation
+        self.assertEqual(esa_df[["channel_12", "channel_13", "channel_19", "channel_20"]].isna().sum().sum(), 0)
 
     def test_03_rule_based_detector_known_inputs(self):
         """Verify rule-based detector on known nominal and anomalous parameters."""
@@ -144,7 +128,7 @@ class TestSatelliteTelemetrySystem(unittest.TestCase):
 
     def test_04_isolation_forest_training_and_scoring(self):
         """Verify Isolation Forest training, inference, scoring, and joblib save/load."""
-        X_train, X_test, y_train, y_test = train_test_split_telemetry(self.df, self.features, test_size=0.30)
+        X_train, X_test, y_train, y_test = train_test_split_telemetry(self.synth_df, self.features, test_size=0.30)
 
         model = SatelliteIsolationForest(contamination=0.05, random_state=42)
         model.fit(X_train)
@@ -177,11 +161,11 @@ class TestSatelliteTelemetrySystem(unittest.TestCase):
     def test_05_combined_detection(self):
         """Verify OR-based combined detection preserves independent detections."""
         detector = RuleBasedDetector()
-        rule_preds, _ = detector.predict(self.df)
+        rule_preds, _ = detector.predict(self.synth_df)
 
         model = SatelliteIsolationForest(contamination=0.05, random_state=42)
-        model.fit(self.df[self.features])
-        ml_preds = model.predict(self.df[self.features])
+        model.fit(self.synth_df[self.features])
+        ml_preds = model.predict(self.synth_df[self.features])
 
         comb_preds = ((rule_preds == 1) | (ml_preds == 1)).astype(int)
 
@@ -211,7 +195,7 @@ class TestSatelliteTelemetrySystem(unittest.TestCase):
     def test_07_experiments_execution(self):
         """Verify that all 4 approved proposal experiments execute and produce valid outputs."""
         rule_det = RuleBasedDetector()
-        res = run_all_experiments(self.df, self.features, rule_detector=rule_det)
+        res = run_all_experiments(self.synth_df, self.features, rule_detector=rule_det)
 
         # Exp 1: Overlap Table
         self.assertIn("experiment_1", res)
@@ -233,7 +217,7 @@ class TestSatelliteTelemetrySystem(unittest.TestCase):
 
     def test_08_visualizer_generation(self):
         """Verify that visualizer generates matplotlib figures without errors."""
-        df = self.df.copy()
+        df = self.synth_df.copy()
         df["combined_prediction"] = df["ground_truth"]
         df["ml_score"] = np.random.normal(0, 0.1, len(df))
         df["ml_prediction"] = df["ground_truth"]

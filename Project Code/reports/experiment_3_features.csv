@@ -1,6 +1,6 @@
 Feature Combination,Features Used,Num Features,Anomalies Flagged,Precision,Recall,F1-Score,Accuracy
-Univariate: temperature,temperature,1,18,0.4444,0.4211,0.4324,0.9533
-Univariate: voltage,voltage,1,17,0.4706,0.4211,0.4444,0.9556
-Univariate: current,current,1,19,0.3684,0.3684,0.3684,0.9467
-Pair: temperature + voltage,"temperature, voltage",2,20,0.65,0.6842,0.6667,0.9711
-Full Feature Set,"temperature, voltage, current, orientation",4,19,1.0,1.0,1.0,1.0
+Univariate: channel_12,channel_12,1,0,0.0,0.0,0.0,0.0
+Univariate: channel_13,channel_13,1,245,1.0,0.0817,0.151,0.0817
+Univariate: channel_19,channel_19,1,783,1.0,0.261,0.414,0.261
+Pair: channel_12 + channel_13,"channel_12, channel_13",2,41,1.0,0.0137,0.027,0.0137
+Full Feature Set,"channel_12, channel_13, channel_19, channel_20",4,114,1.0,0.038,0.0732,0.038

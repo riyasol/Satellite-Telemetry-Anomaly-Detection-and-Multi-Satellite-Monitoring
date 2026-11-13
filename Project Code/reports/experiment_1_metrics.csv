@@ -1,3 +1,3 @@
 Detector,Precision,Recall,F1-Score,Accuracy
-Rule-Based,0.8125,0.6842,0.7429,0.98
-Isolation Forest,1.0,1.0,1.0,1.0
+Rule-Based,1.0,0.0137,0.027,0.0137
+Isolation Forest,1.0,0.038,0.0732,0.038

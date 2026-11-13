@@ -24,22 +24,29 @@ Because manual inspection of voluminous telemetry streams is unfeasible in real-
 1. **Rule-Based Threshold Detection (Baseline):** Deterministic safety boundaries for parameters with well-defined physical operating limits.
 2. **Unsupervised Machine Learning (Isolation Forest):** Isolation-tree-based anomaly scoring capable of identifying multivariate correlation deviations and subtle patterns that fixed single-parameter thresholds fail to catch.
 3. **Combined Monitoring Pipeline (OR-Logic):** An integrated decision system ensuring that both explicit threshold breaches and complex multivariate anomalies are detected.
-4. **Interactive Streamlit Web Dashboard:** A 5-tab mission interface displaying constellation health trends, satellite-wise telemetry, detected anomalies with violation reasons, and experimental evaluations.
+4. **Dual Dataset Evaluation:** Evaluated on both multi-satellite controlled demonstration telemetry (`SAT-01`, `SAT-02`, `SAT-03`) and actual spacecraft telemetry from the **European Space Agency (ESA) Anomaly Detection Benchmark Mission 1**.
+5. **Interactive Streamlit Web Dashboard:** A 5-tab mission interface displaying constellation health trends, satellite-wise telemetry, detected anomalies with violation reasons, and experimental evaluations.
 
 ---
 
 ## 2. System Architecture & Project Structure
 
-The project has a clean, lightweight architecture using standard Python data science libraries (`pandas`, `numpy`, `scikit-learn`, `matplotlib`, `streamlit`, `joblib`):
-
 ```
 Project Code/
 ├── data/
 │   └── telemetry_data.csv                 # Multi-satellite telemetry (SAT-01, SAT-02, SAT-03; 1,500 records)
+├── ESA-Mission1/ESA-Mission1/             # Real European Space Agency benchmark dataset
+│   ├── channels.csv                       # Channel metadata (subsystems, physical units, groups)
+│   ├── labels.csv                         # Ground-truth operational anomaly time intervals
+│   ├── anomaly_types.csv                  # Anomaly taxonomy (category, dimensionality, locality)
+│   └── channels/channel_*.zip             # Spacecraft telemetry channel time-series archives
 ├── models/
-│   └── isolation_forest_model.joblib      # Serialized trained scikit-learn Isolation Forest model
+│   ├── isolation_forest_synthetic.joblib  # Trained Isolation Forest model on multi-satellite telemetry
+│   └── isolation_forest_esa.joblib        # Trained Isolation Forest model on actual ESA spacecraft channels
 ├── reports/
 │   ├── telemetry_analysis_report.csv      # Complete telemetry dataset with rule, ML, and combined predictions
+│   ├── telemetry_analysis_report_synthetic.csv # Synthetic telemetry analysis report
+│   ├── telemetry_analysis_report_esa.csv  # ESA Mission 1 actual telemetry analysis report
 │   ├── experiment_1_overlap.csv           # Rule vs ML overlap and agreement breakdown
 │   ├── experiment_1_metrics.csv           # Rule vs ML precision, recall, F1, accuracy comparison
 │   ├── experiment_2_contamination.csv     # Contamination sensitivity sweep results (c = 0.01, 0.03, 0.05, 0.10)
@@ -50,90 +57,97 @@ Project Code/
 │       ├── fig2_confusion_matrices.png    # Side-by-side confusion matrix heatmaps
 │       ├── fig3_contamination_curve.png   # Sensitivity curve across contamination levels
 │       ├── fig4_feature_combinations.png  # Ablation comparison bar chart
-│       └── fig5_anomaly_scores_distribution.png # Distribution of ML anomaly scores
+│       ├── fig5_anomaly_scores_distribution.png # Distribution of ML anomaly scores
+│       └── fig6_esa_mission1_telemetry.png# Actual ESA Mission 1 spacecraft telemetry time-series plot
 ├── src/
+│   ├── __init__.py                        # Package marker
 │   ├── generate_data.py                   # Realistic multi-satellite telemetry generation with orbital cycles
-│   ├── data_loader.py                     # Data ingestion, schema validation, cleaning, and feature preparation
+│   ├── data_loader.py                     # Dual-source data ingestion, schema validation, cleaning, and preparation
 │   ├── anomaly_detector.py                # Rule-based threshold detector with violation reason tracking
 │   ├── ml_anomaly_detector.py             # Scikit-learn Isolation Forest model wrapper and scoring
 │   ├── evaluation.py                      # Accuracy, Precision, Recall, F1, and Confusion Matrix calculations
 │   ├── experiments.py                     # Automated execution of all 4 proposal experiments
 │   ├── visualizer.py                      # Matplotlib plotting functions and figure export
 │   ├── main.py                            # End-to-end command-line pipeline execution script
-│   └── dashboard.py                       # Interactive Streamlit monitoring dashboard (5 tabs)
+│   └── dashboard.py                       # Interactive Streamlit monitoring dashboard (5 tabs, dual source)
 ├── tests/
+│   ├── __init__.py                        # Package marker
 │   └── test_system.py                     # Automated unit and integration test suite (8 tests)
+├── .vscode/
+│   └── settings.json                      # VS Code interpreter and Pylance search paths
 ├── .gitignore                             # Ignored files (venv, pycache, temporary artifacts)
 └── README.md                              # Project documentation
 ```
 
 ---
 
-## 3. Telemetry Dataset & Physics-Informed Dynamics
+## 3. Dual Dataset Support
 
-The system monitors telemetry across three operational satellites: **SAT-01**, **SAT-02**, and **SAT-03**.
+### 1. Controlled Multi-Satellite Demonstration Telemetry
+- **Constellation:** SAT-01, SAT-02, and SAT-03 sampled at 1-minute intervals (1,500 records).
+- **Physics-Informed Baseline:** Nominal 90-minute orbital cycle for temperature and battery charge/discharge; 45-minute attitude oscillation.
+- **Monitored Physical Parameters:**
+  - `temperature` (°C): Nominal 66°C to 74°C.
+  - `voltage` (V): Nominal 3.70V to 4.00V.
+  - `current` (A): Nominal 1.65A to 2.05A.
+  - `orientation` (°): Nominal -20° to +20°.
+- **5 Controlled Injected Fault Modes:**
+  1. *Thermal Spike:* Radiator / thermal control failure (`temperature > 80.0°C`).
+  2. *Voltage Collapse:* Battery cell degradation (`voltage < 3.0V`).
+  3. *Current Surge:* Electrical overload / short circuit (`current > 2.5A`).
+  4. *Attitude Anomaly:* Reaction wheel desaturation / tumble (`|orientation| > 45.0°`).
+  5. *Multivariate Drift:* Sensor correlation violation where each individual telemetry parameter stays within its permissible threshold, but their joint behavior violates physical laws.
 
-### Telemetry Parameters Monitored
-- **Temperature (`temperature`, °C):** Nominal thermal operating range of 66°C to 74°C driven by a 90-minute orbital eclipse and solar exposure cycle.
-- **Bus Voltage (`voltage`, V):** Nominal battery charge/discharge voltage ranging between 3.70V and 4.00V.
-- **Array Current (`current`, A):** Nominal payload power draw and solar generation oscillation between 1.65A and 2.05A.
-- **Reaction Wheel Attitude (`orientation`, °):** Attitude control pointing angle oscillating between -20° and +20°.
-
-### Controlled Injected Fault Modes
-To rigorously benchmark detector performance against known ground truth, five realistic failure modes are injected into the time series:
-1. **Thermal Spike:** Thermal control / radiator failure causing overheating (`temperature > 80.0°C`).
-2. **Voltage Collapse:** Battery cell degradation / discharge drop (`voltage < 3.0V`).
-3. **Current Surge:** Electrical short / payload overload (`current > 2.5A`).
-4. **Attitude Anomaly:** Reaction wheel desaturation / tumble (`|orientation| > 45.0°`).
-5. **Multivariate Drift:** Sensor correlation violation where each individual telemetry parameter stays within its permissible threshold, but their joint physical correlation violates orbital physics (e.g., high temperature combined with low voltage during eclipse). *This fault explicitly demonstrates the necessity of multivariate machine learning beyond simple single-parameter rules.*
+### 2. ESA Anomaly Detection Benchmark Mission 1 (Actual Spacecraft Telemetry)
+- **Real Spacecraft Telemetry:** Evaluates real flight telemetry from European Space Agency Mission 1 (Subsystem 6 Group 3: `channel_12`, `channel_13`, `channel_19`, `channel_20`).
+- **Data Ingestion:** Handles compressed channel archives, pickled time-series alignment, and missing value interpolation.
+- **Ground-Truth Label Mapping:** Maps true anomaly start/end intervals from `labels.csv` to telemetry rows.
+- **Statistical Control Thresholds:** Dynamically derives empirical 3-sigma boundaries from nominal baseline operations for uncalibrated spacecraft channels.
 
 ---
 
 ## 4. Methodology & Implementation
 
 ### 1. Data Cleaning & Feature Preparation (Riya)
-- Ingests raw multi-satellite telemetry records from `data/telemetry_data.csv`.
-- Validates data types, enforces chronological ordering per satellite, and imputes missing or corrupted readings via forward/backward filling.
-- Prepares numerical feature matrices for model consumption and extracts relevant parameters.
+- Ingests raw telemetry records from either synthetic multi-satellite CSV or ESA channel archives.
+- Standardizes timestamps, enforces chronological ordering, and imputes missing readings using time-based interpolation.
+- Prepares numerical feature matrices for training and inference.
 
 ### 2. Rule-Based Threshold Detection (Gagan)
-- Implements engineering safety bounds:
-  - `temperature > 80.0°C`
-  - `voltage < 3.0V` or `voltage > 4.2V`
-  - `current > 2.5A`
-  - `|orientation| > 45.0°`
-- Tracks exact parameter violation strings (e.g., `temperature=88.50 > max(80.00)`).
-- Supports dynamic $n$-sigma empirical threshold estimation from nominal baseline periods.
+- Evaluates individual telemetry parameters against configured upper and lower safety boundaries.
+- For synthetic data, applies engineering limits (`temp > 80°C`, `voltage < 3.0V`, `current > 2.5A`, `|orientation| > 45°`).
+- For ESA telemetry, computes dynamic 3-sigma statistical thresholds from baseline nominal periods.
+- Records exact parameter violation descriptions (e.g. `temperature=88.50 > max(80.00)`).
 
 ### 3. Isolation Forest Machine Learning (Shreya)
 - Implements genuine unsupervised anomaly detection using `sklearn.ensemble.IsolationForest`.
-- Uses an ensemble of 100 Isolation Trees ($i\text{Trees}$) that isolate anomalous instances through random partitioning (anomalies require fewer splits and reside near the root).
+- Uses an ensemble of isolation trees ($i\text{Trees}$) that partition feature space; anomalies are isolated near tree roots.
 - Trained strictly on nominal baseline observations to prevent temporal data leakage.
-- Converts raw decision functions to intuitive, continuous **ML Anomaly Scores** (higher values = higher probability of an anomaly).
+- Converts raw decision function outputs to continuous, positive **ML Anomaly Scores** (higher values = higher likelihood of anomaly).
 - Persists trained models to disk using `joblib`.
 
 ### 4. Combined Detection Strategy (Jayanth)
 - Fuses detections through logical OR:
   $$\text{Combined Anomaly} = (\text{Rule Flag} == 1) \lor (\text{ML Flag} == 1)$$
 - Classifies each observation into: `"Both (Rule + ML)"`, `"Rule Anomaly"`, `"ML Anomaly"`, or `"Normal"`.
-- Combines the high precision of physical safety boundaries with the high recall of multi-sensor ML.
+- Combines the high precision of safety thresholds with the high recall of multi-sensor ML.
 
 ---
 
-## 5. Proposal Experiments & Actual Results
+## 5. Proposal Experiments & Results
 
-All four experiments described in Section 3 of the project proposal are programmatically executed and evaluated on a **chronologically held-out unseen test set (30% partition = 450 observations)**:
+All four experiments described in Section 3 of the project proposal are programmatically executed on chronologically held-out unseen test partitions:
 
 ### Experiment 1: Rule-Based vs. Isolation Forest Overlap & Agreement
-Evaluates the agreement and complementary strengths between threshold logic and Isolation Forest:
+Evaluates the agreement and complementary strengths between threshold rules and Isolation Forest:
 - **Agreed Normal Observations:** 428 samples (95.11%)
-- **Agreed Anomalies (Flagged by Both):** 13 samples (2.89%)
+- **Agreed Anomalies (Both):** 13 samples (2.89%)
 - **Rule-Only Detections (Single-Sensor Outliers):** 3 samples (0.67%)
 - **ML-Only Detections (Multivariate Drifts):** 6 samples (1.33%)
 - **Overall Decision Agreement:** **98.00%**
 
 ### Experiment 2: Contamination Parameter Sensitivity Sweep
-Tests the effect of the Isolation Forest contamination parameter $c \in \{0.01, 0.03, 0.05, 0.10\}$ on unseen test observations:
+Tests contamination values $c \in \{0.01, 0.03, 0.05, 0.10\}$ on unseen test observations:
 
 | Contamination ($c$) | Anomalies Flagged | Flagged Rate (%) | Accuracy | Precision | Recall | F1-Score |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -142,10 +156,8 @@ Tests the effect of the Isolation Forest contamination parameter $c \in \{0.01, 
 | **0.05 (Nominal)** | 19 | 4.22% | **1.0000** | **1.0000** | **1.0000** | **1.0000** |
 | **0.10** | 40 | 8.89% | 0.9533 | 0.4750 | 1.0000 | 0.6441 |
 
-*Observation: Setting $c = 0.05$ aligns with the true anomaly rate, achieving optimal balance between precision and recall.*
-
 ### Experiment 3: Feature Combination Ablation Study
-Studies how model performance varies when using single parameters, sensor pairs, or the full feature vector:
+Studies performance across single parameters, sensor pairs, and the full feature vector:
 
 | Feature Combination | Parameters Used | No. of Features | Flagged | Precision | Recall | F1-Score | Accuracy |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -154,8 +166,6 @@ Studies how model performance varies when using single parameters, sensor pairs,
 | **Univariate: Current** | `current` | 1 | 19 | 0.3684 | 0.3684 | 0.3684 | 0.9467 |
 | **Bivariate Pair** | `temperature`, `voltage` | 2 | 20 | 0.6500 | 0.6842 | 0.6667 | 0.9711 |
 | **Full Multivariate Set** | `temp`, `volt`, `curr`, `orient` | 4 | 19 | **1.0000** | **1.0000** | **1.0000** | **1.0000** |
-
-*Observation: Univariate models miss multi-sensor faults. The full 4-parameter feature set provides the highest detection capability.*
 
 ### Experiment 4: Comprehensive Method Performance Evaluation
 Side-by-side performance comparison on the unseen test partition:
@@ -166,29 +176,11 @@ Side-by-side performance comparison on the unseen test partition:
 | **Isolation Forest (ML)** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | 19 | 0 | 431 | 0 | 19 |
 | **Combined (OR-Logic)** | 0.9933 | 0.8636 | **1.0000** | 0.9268 | 19 | 3 | 428 | 0 | 22 |
 
-#### Confusion Matrices (Unseen Test Set, 450 Samples):
-```
---- Rule-Based Baseline ---
-                      Predicted Normal (0)   Predicted Anomaly (1)
-Actual Normal (0)            TN=428                  FP=3
-Actual Anomaly(1)            FN=6                    TP=13
-
---- Isolation Forest (ML) ---
-                      Predicted Normal (0)   Predicted Anomaly (1)
-Actual Normal (0)            TN=431                  FP=0
-Actual Anomaly(1)            FN=0                    TP=19
-
---- Combined (OR-Logic) ---
-                      Predicted Normal (0)   Predicted Anomaly (1)
-Actual Normal (0)            TN=428                  FP=3
-Actual Anomaly(1)            FN=0                    TP=19
-```
-
 ---
 
 ## 6. Interactive Streamlit Dashboard
 
-The Streamlit web interface (`src/dashboard.py`) provides operators with 5 dedicated monitoring sections:
+The Streamlit web interface (`src/dashboard.py`) provides operators with 5 dedicated sections and a sidebar toggle between **Synthetic Telemetry** and **ESA Mission 1 Benchmark**:
 1. **Overview:** Constellation-wide health counters, total observations, normal readings, detected anomalies, anomaly percentage, and detector breakdown.
 2. **Dataset:** Tabular telemetry preview, data types, min/max values, and descriptive statistics.
 3. **Anomaly Detection:** Rule-based, Isolation Forest, and Combined detection tables with violation reasons and satellite filters.
@@ -208,19 +200,19 @@ pip install pandas numpy scikit-learn matplotlib streamlit joblib
 ```
 
 ### 1. Run the End-to-End CLI Pipeline
-Executes data ingestion, model training, evaluation, all 4 experiments, figure generation, and CSV report export:
+Executes both synthetic multi-satellite and actual ESA telemetry pipelines, trains models, evaluates test sets, runs all 4 experiments, and exports CSV reports and figures:
 ```powershell
 .\venv\Scripts\python src\main.py
 ```
 
 ### 2. Launch the Streamlit Monitoring Dashboard
-Launches the interactive web dashboard in your default browser:
+Launches the interactive web dashboard with dual dataset support in your default browser:
 ```powershell
 .\venv\Scripts\streamlit run src\dashboard.py
 ```
 
 ### 3. Run the Automated Test Suite
-Verifies all 8 unit and integration tests across data processing, rule-based detection, Isolation Forest, evaluation metrics, experiments, and plotting:
+Verifies all 8 unit and integration tests across data processing, ESA loading, detectors, evaluation, experiments, and plotting:
 ```powershell
 .\venv\Scripts\python -m unittest tests\test_system.py
 ```
